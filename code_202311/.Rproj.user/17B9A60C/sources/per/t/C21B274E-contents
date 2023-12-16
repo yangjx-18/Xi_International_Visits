@@ -1,0 +1,83 @@
+---
+title: "Exploratory Data Analysis"
+author: "Jingxi Yang"
+date: "10/15/2023"
+output: pdf_document
+fontsize: 12pt
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(stargazer)
+```
+
+## 1 The Dataset Source I am examing
+
+I am examining the C4P de-indentified unmet social need survey dataset shared by Dr. Thomas Best in the study team. It is shared confiedentially through the email so there is no public link.
+
+```{r data, include=FALSE}
+c4p_withlabel <- read.csv('./data/hpl_2023Fall_C4P_LCA_de_identified.csv')
+
+mydata <- read.csv('./data/hpl_2023Fall_C4P_LCA_de_identified_no_labels.csv')
+#load("top1.rdata")
+#load("model2.rdata")
+```
+
+## 2 The production process of this dataset
+
+The UChicago Center for Health and the Social Sciences produced the dataset. They draw the information from the longitudinal survey collected from the patients enrolled in the standard care group (control group), the CCP group and C4P group.
+
+## 3 The 3 variables most useful for the project
+
+Since this is the survey data, all the 17 unmet social needs variables (17 questions in th survey) are all the most useful. Besides, `arm`, `screen_medicaid`, and `rand_date_shifted` are the most useful as the control or covariate. 
+
+- First, `arm` is the treatment variable to tell if this person is in the control group or the CCP group or the C4P group. That is the subsetting standard by which we do the LCA comparison analysis across different groups.
+
+- The `screen_medicaid` variable could be the covariate or classification variable to show if a certain person at certain time was enrolled in the medicaid. This is useful because we will use this to analyze the change of unmet needs of people with medicaid and without respectively and check the differences of the pattern.
+
+- The `rand_date_shifted` variable is the date of the survey administered to the patients. It is important to notice a random number of uniform distribution $(-180,180)$ put on the follow-up date. We have to reverse it back to ensure all the patients on the same date are on the same page when we find the baseline to do the LCA.
+
+## 4 The coverage of those variables in both spatial and temporal senses.
+
+Since the location is an important indicator of the identification, it is not yet disclosed to us so far. But intuitively, it encompasses the residents around the UChicago Medicine Center. For the temporal perspective, the years in the data spans from 2017 to 2023 and the follow-up survey recurred every 3 months so the dataset have been naturally updated every 3 months.
+
+
+## 5 The sources of bias might affect the measurement of these variables.
+
+- The adverse selection bias. The patients signing up for this program in the first place may have persistent severe health condition or demands of highly frequent exposure to the medical resources. They may try to exploit this opportunity by pretending to claim lot of unmet social needs so that they can enjoy the resources longer. So this intention may cause the unmet social needs unchanged or adversely affect the quality of the interference of the C4P program. 
+
+- Survivor bias.The lots of missing value in the column of income may indicate respondents were unwilling to report their income just due to their poor financial positions. So the overall dataset may only catch the survivors' "high" income rather than the actual picture of the income distribution, which is a severe problem if we try to subset by the income to do the deep-down LCA.
+
+## 6 The resources or platforms exist to collect the data
+
+It is the raw data of answers collected through the phone survey tracking each patients every 3 months and identification information collected at the beginning of the enrollment.
+ 
+## Desciptive Stats of the Dataset (Next Page)
+
+```{r sum, echo=FALSE,eval=TRUE,results='asis', message=FALSE, warning=FALSE}
+stargazer(mydata, title = "Desciptive Stats of the Dataset")
+
+```
+
+
+```{r EDA , eval=FALSE, echo=FALSE}
+#summary(c4p_nolabel)
+unique(c4p_withlabel$study)
+unique(c4p_withlabel$round)
+unique(c4p_withlabel$followup_status)
+unique(c4p_withlabel$arm)
+unique(c4p_withlabel$pt_status)
+
+unique(c4p_withlabel$rand_date_shifted)
+unique(c4p_withlabel$fu_date_shifted)
+
+unique(c4p_withlabel$screen_medicaid)
+unique(c4p_withlabel$screen_age_v2)
+unique(c4p_withlabel$int_race)
+unique(c4p_withlabel$int_ethnicity)
+
+unique(mydata$fu_unmet_healthy_eats_acts)
+```
+
+

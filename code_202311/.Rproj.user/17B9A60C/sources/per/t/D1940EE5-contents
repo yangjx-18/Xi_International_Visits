@@ -1,0 +1,519 @@
+---
+title: "IR_Preliminary_Research"
+author: "Jersey Y."
+date: "2023-11-17"
+output: pdf_document
+fontsize: 12pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(stargazer)
+library(tidyverse)
+library(countrycode)
+library(readxl)
+library(strucchange)
+```
+
+
+
+```{r data, include=FALSE}
+load("~/Desktop/Paulson/Harvard/AgreementScoresAll_Jul2023.Rdata")
+WITS_Partner_Timeseries <- read_excel("WITS-Partner-Timeseries.xlsx")
+```
+
+
+```{r data cleaning, echo=FALSE, warning=FALSE}
+trade_data <- WITS_Partner_Timeseries %>% select(-"Partner Name", -"Trade Flow", -"Indicator")
+trade_data <- pivot_longer(trade_data, 
+                          cols = c("2002",        
+                                   "2003",          "2004",          "2005",         "2006",         "2007",         
+                                   "2008",          "2009" ,         "2010" ,         "2011",          "2012",         
+                                   "2013",          "2014",          "2015",          "2016",          "2017",         
+                                   "2018" ,         "2019",          "2020"         ), 
+                          names_to = "Year", 
+                          values_to = "Share")
+trade_data <- trade_data %>% mutate(cty_name = countrycode(trade_data$`Reporter Name`, "country.name", "cown"))
+trade_data <- trade_data %>% mutate(Year = as.numeric(Year))
+##############
+China_post12 <- dfAgree %>% filter(year >= 2002 & ccode1 == 710) %>% mutate(cty_name = countrycode(ccode2, "cown", "country.name"))
+
+
+###########
+combined <- left_join(China_post12, trade_data, by = c("ccode2" = "cty_name", "year" = "Year")) %>% 
+  mutate(Share = Share / 100)
+
+plot_time_series <- function(data, country_code, title, vline_years = NULL) {
+  # Start the ggplot
+  p <- ggplot(data %>% filter(ccode2 == country_code), aes(x = year)) +
+    geom_line(aes(y = IdealPointDistance, color = "IdealPointDistance")) +
+    geom_line(aes(y = Share, color = "Share")) +
+    scale_color_manual(values = c("IdealPointDistance" = "blue", "Share" = "red")) +
+    labs(title = title,
+         x = "Year",
+         y = "Value",
+         color = "Legend")
+
+  # Add vertical lines only if vline_years is provided
+  if (!is.null(vline_years) && length(vline_years) > 0) {
+    p <- p + geom_vline(xintercept = vline_years, linetype = "dashed", color = "black")
+  }
+
+  return(p)
+}
+
+
+```
+
+```{r function setting, echo=FALSE}
+analyze_trends <- function(country_code, variable_name) {
+
+  # Filter data for the specified country code
+  data_country <- combined %>% filter(ccode2 == country_code)
+
+  # Check if data is present after filtering
+  if(nrow(data_country) == 0) {
+    stop(paste("No data available for country code", ccode2))
+  }
+  
+  # Filter data for the specified country code
+  # Split the data
+  pre_2012 <- data_country %>% filter(year <= 2012)  
+  post_2012 <- data_country %>% filter(year > 2012)
+
+  # Exclude rows with missing values in the chosen variable
+  pre_2012 <- na.omit(pre_2012, cols = variable_name)
+  post_2012 <- na.omit(post_2012, cols = variable_name)
+
+  # Calculate average value for both periods
+  avg_pre_2012 <- mean(pre_2012[[variable_name]])
+  avg_post_2012 <- mean(post_2012[[variable_name]])
+
+  # Fit linear models and extract slopes
+  model_pre_2012 <- lm(reformulate("year", response = variable_name), data = pre_2012)
+  slope_pre_2012 <- coef(model_pre_2012)["year"]
+
+  model_post_2012 <- lm(reformulate("year", response = variable_name), data = post_2012)
+  slope_post_2012 <- coef(model_post_2012)["year"]
+
+  # Fit a linear model for the entire dataset
+  model_full <- lm(reformulate("year", response = variable_name), data = data_country)
+
+  # Perform the Chow Test
+  chow_test_result <- sctest(model_full, fit1 = model_pre_2012, fit2 = model_post_2012, type = "Chow")
+
+  t_test_result <- t.test(pre_2012[[variable_name]], post_2012[[variable_name]])
+
+  # Print results
+    print(t_test_result)
+   if (t_test_result$p.value < 0.05) {
+    cat("The change in of political relations is statistically significant.\n")
+  } else {
+    cat("The change of political relations is NOT statistically significant.\n")
+  }
+  # Print the results
+  cat("Average", variable_name, "Pre-2012:", avg_pre_2012, "\n")
+  cat("Average", variable_name, "Post-2012:", avg_post_2012, "\n")
+  cat("\n")
+  cat("\n")
+  cat("Chow Test Results for", variable_name, ":\n")
+  print(chow_test_result)
+  
+  if(chow_test_result$p.value < 0.1) {
+    if(slope_post_2012 > slope_pre_2012) {
+      cat("The slope of economic dependence has significantly increased after 2012.\n")
+    } else if(slope_post_2012 < slope_pre_2012) {
+      cat("The slope of economic dependence has significantly decreased after 2012.\n")
+    } else {
+      cat("The slope of economic dependence has remained relatively unchanged after 2012.\n")
+    }
+  } else {
+    cat("Economics dependence trend change is NOT statistically significant at the 5% level.\n")
+  }
+  cat("Slope of", variable_name, "Pre-2012:", slope_pre_2012, "\n")
+  cat("Slope of", variable_name, "Post-2012:", slope_post_2012, "\n")
+  cat("\n")
+}
+
+
+analyze_yearly_difference <- function(ccode, time) {
+  library(dplyr)
+
+  # Filter the data for the specified country code and arrange by year
+  yearly_diffs <- combined %>%
+    filter(ccode2 == ccode) %>% as.data.frame() %>% 
+    arrange(year) %>% 
+    mutate(yearly_diff = IdealPointDistance - lag(IdealPointDistance, 2))
+
+  # Isolate the difference for the specified year
+  specific_diff <- yearly_diffs %>%
+    filter(year == time) %>%
+    pull(yearly_diff)
+
+  # Differences for other years
+  other_diffs <- yearly_diffs %>%
+    filter(year != time) %>%
+    pull(yearly_diff)
+
+  # Remove NAs that result from lag
+  other_diffs <- na.omit(other_diffs)
+
+  # Calculate the mean and standard deviation of other differences
+  mean_diffs <- mean(other_diffs)
+  sd_diffs <- sd(other_diffs)
+
+  # Assuming a 95% confidence interval, calculate the range
+  ci_range <- c(mean_diffs - 1.96 * sd_diffs / sqrt(length(other_diffs)), 
+                mean_diffs + 1.96 * sd_diffs / sqrt(length(other_diffs)))
+
+  # Check if the specific year's difference is outside this range
+  result <- specific_diff > ci_range[2] | specific_diff < ci_range[1]
+  return(result)
+}
+
+trade_yearly_difference <- function(ccode, time) {
+  library(dplyr)
+
+  # Filter the data for the specified country code and arrange by year
+  yearly_diffs <- combined %>%
+    filter(ccode2 == ccode) %>% as.data.frame() %>% 
+    arrange(year) %>% 
+    mutate(yearly_diff = Share - lag(Share, 2))
+
+  # Isolate the difference for the specified year
+  specific_diff <- yearly_diffs %>%
+    filter(year == time) %>%
+    pull(yearly_diff)
+
+  # Differences for other years
+  other_diffs <- yearly_diffs %>%
+    filter(year != time) %>%
+    pull(yearly_diff)
+
+  # Remove NAs that result from lag
+  other_diffs <- na.omit(other_diffs)
+
+  # Calculate the mean and standard deviation of other differences
+  mean_diffs <- mean(other_diffs)
+  sd_diffs <- sd(other_diffs)
+
+  # Assuming a 95% confidence interval, calculate the range
+  ci_range <- c(mean_diffs - 1.96 * sd_diffs / sqrt(length(other_diffs)), 
+                mean_diffs + 1.96 * sd_diffs / sqrt(length(other_diffs)))
+
+  # Check if the specific year's difference is outside this range
+  result <- specific_diff > ci_range[2] | specific_diff < ci_range[1]
+  return(result)
+}
+
+```
+
+## Dataset
+
+- Harvard UN Vote Dataset
+- WITS World Trade Dataset
+
+## Countries Comparison
+```{r echo=FALSE, warning=FALSE}
+combined %>% filter(ccode2 %in% c(160, 900, 211, 140, 20, 155, 710, 437, 651, 220, 255, 750, 850, 325, 740, 732, 820, 70, 600, 210, 290, 365, 670, 830, 560, 230, 380, 225, 800, 640, 200, 2)) %>% ggplot(., aes(x = year, y = IdealPointDistance, color = cty_name)) +
+  geom_line() +
+  labs(title = "Political Relations with China (The higher, the worse)",
+       x = "Time",
+       y = "IdealPointDistance",
+       color = "Group") +
+  theme_minimal()
+```
+```{r echo=FALSE, warning=FALSE}
+combined %>% filter(ccode2 %in% c(160, 900, 211, 140, 20, 155, 710, 437, 651, 220, 255, 750, 850, 325, 740, 732, 820, 70, 600, 210, 290, 365, 670, 830, 560, 230, 380, 225, 800, 640, 200, 2)) %>% ggplot(., aes(x = year, y = Share, color = cty_name)) +
+  geom_line() +
+  labs(title = "Economics Relations with China (The lower, the worse)",
+       x = "Time",
+       y = "Share",
+       color = "Group") +
+  theme_minimal()
+```
+
+## USA
+
+```{r USA, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 2, "China-US Relationship", c(2015, 2016, 2017))
+print('Economic Dependence Trend Result:')
+analyze_trends(2, "Share")
+
+print('Political Relationship Trend Result:')
+analyze_trends(2, "IdealPointDistance")
+
+
+
+for (year in 2015:2017) {
+  poli <- analyze_yearly_difference(ccode = 2, time = year)
+  cat("In", year, "It's", poli, "Xi's visit make a difference on political relations.\n")
+  trade <- trade_yearly_difference(2, year)
+  cat("In", year, "It's", trade, "Xi's visit make a difference on economic relations.\n")}
+
+
+```
+
+## RUSSIA
+```{r RUSSIA, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 365, "China-Russia Relationship", c(2013, 2014, 2015, 2017, 2018, 2019))
+print('Economic Dependence Trend Result:')
+analyze_trends(365, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(365, "IdealPointDistance")
+
+for (year in c(2013, 2014, 2015, 2017, 2018, 2019)) {
+  analyze_yearly_difference(ccode = 365, time = year)
+  cat("In", year, "It's", poli, "Xi's visit make a difference on political relations.\n")
+  trade_yearly_difference(365, year)
+  cat("In", year, "It's", trade, "Xi's visit make a difference on economic relations.\n")
+
+}
+```
+
+## Argentina
+```{r Argentina, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 160, "China-Argentina Relationship", c(2014, 2018))
+print('Economic Dependence Trend Result:')
+analyze_trends(160, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(160, "IdealPointDistance")
+```
+## Australia
+```{r Australia, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 900, "China-Australia Relationship", c(2014))
+print('Economic Dependence Trend Result:')
+analyze_trends(900, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(900, "IdealPointDistance")
+```
+
+## Belgium
+
+```{r Belgium, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 211, "China-Belgium Relationship", c(2014))
+print('Economic Dependence Trend Result:')
+analyze_trends(211, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(211, "IdealPointDistance")
+```
+
+## Brazil
+```{r Brazil, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 140, "China-Belgium Relationship", c(2014, 2019))
+print('Economic Dependence Trend Result:')
+analyze_trends(140, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(140, "IdealPointDistance")
+```
+## Canada
+```{r Canada, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 20, "China-Canada Relationship")
+print('Economic Dependence Trend Result:')
+analyze_trends(20, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(20, "IdealPointDistance")
+```
+
+## Chile
+```{r Chile, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 155, "China-Chile Relationship", c(2016))
+print('Economic Dependence Trend Result:')
+analyze_trends(155, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(155, "IdealPointDistance")
+```
+
+## Cote dIvoire
+```{r Cote dIvoire, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 437, "China-Côte d'Ivoire Relationship")
+print('Economic Dependence Trend Result:')
+analyze_trends(437, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(437, "IdealPointDistance")
+```
+
+## Egypt
+```{r Egypt, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 651, "China-Egypt Relationship",c(2016))
+print('Economic Dependence Trend Result:')
+analyze_trends(651, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(651, "IdealPointDistance")
+```
+## France
+```{r France, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 220, "China-France Relationship",c(2014,2015,2019))
+print('Economic Dependence Trend Result:')
+analyze_trends(220, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(220, "IdealPointDistance")
+```
+
+## Germany
+```{r Germany, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 255, "China-Germany Relationship",c(2014,2017))
+print('Economic Dependence Trend Result:')
+analyze_trends(255, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(255, "IdealPointDistance")
+```
+
+## India
+```{r India, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 750, "China-India Relationship",c(2014,2016,2019))
+print('Economic Dependence Trend Result:')
+analyze_trends(750, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(750, "IdealPointDistance")
+```
+## Indonesia
+```{r Indonesia, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 850, "China-Indonesia Relationship",c(2013,2015,2022))
+print('Economic Dependence Trend Result:')
+analyze_trends(850, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(850, "IdealPointDistance")
+```
+## Italy
+```{r Italy, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 325, "China-Italy Relationship",c(2019))
+print('Economic Dependence Trend Result:')
+analyze_trends(325, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(325, "IdealPointDistance")
+```
+
+## Japan
+```{r Japan, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 740, "China-Japan Relationship",c(2019))
+print('Economic Dependence Trend Result:')
+analyze_trends(740, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(740, "IdealPointDistance")
+```
+## South Korea
+```{r South Korea, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 732, "China-Korea Relationship",c(2014))
+print('Economic Dependence Trend Result:')
+analyze_trends(732, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(732, "IdealPointDistance")
+```
+## Malaysia
+```{r Malaysia, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 820, "China-Malaysia Relationship",c(2013))
+print('Economic Dependence Trend Result:')
+analyze_trends(820, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(820, "IdealPointDistance")
+```
+## Mexico
+```{r Mexico, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 70, "China-Mexico Relationship",c(2013))
+print('Economic Dependence Trend Result:')
+analyze_trends(70, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(70, "IdealPointDistance")
+```
+## Morocco
+```{r Morocco, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 600, "China-Morocco Relationship")
+print('Economic Dependence Trend Result:')
+analyze_trends(600, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(600, "IdealPointDistance")
+```
+## Netherlands
+```{r Netherlands, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 210, "China-Netherlands Relationship", 2014)
+print('Economic Dependence Trend Result:')
+analyze_trends(210, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(210, "IdealPointDistance")
+```
+## Poland
+```{r Poland, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 290, "China-Poland Relationship", 2016)
+print('Economic Dependence Trend Result:')
+analyze_trends(290, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(290, "IdealPointDistance")
+```
+## Saudi Arabia
+```{r Saudi Arabia, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 670, "China-Saudi Arabia Relationship", c(2016,2022))
+print('Economic Dependence Trend Result:')
+analyze_trends(670, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(670, "IdealPointDistance")
+```
+## Singapore
+```{r Singapore, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 830, "China-Singapore Relationship", c(2015))
+print('Economic Dependence Trend Result:')
+analyze_trends(830, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(830, "IdealPointDistance")
+```
+## South Africa
+```{r South Africa, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 560, "China-South Africa Relationship", c(2013,2015,2018,2023))
+print('Economic Dependence Trend Result:')
+analyze_trends(560, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(560, "IdealPointDistance")
+```
+## Spain
+```{r Spain, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 230, "China-Spain Relationship", c(2016,2018))
+print('Economic Dependence Trend Result:')
+analyze_trends(230, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(230, "IdealPointDistance")
+```
+
+## Sweden
+```{r Sweden, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 380, "China-Sweden Relationship")
+print('Economic Dependence Trend Result:')
+analyze_trends(380, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(380, "IdealPointDistance")
+```
+
+## Switzerland
+```{r Switzerland, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 225, "China-Switzerland Relationship", 2017)
+print('Economic Dependence Trend Result:')
+analyze_trends(225, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(225, "IdealPointDistance")
+```
+
+## Thailand
+```{r Thailand, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 800, "China-Thailand Relationship", 2022)
+print('Economic Dependence Trend Result:')
+analyze_trends(800, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(800, "IdealPointDistance")
+```
+
+## Turkey
+```{r Turkey, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 640, "China-Turkey Relationship", 2015)
+print('Economic Dependence Trend Result:')
+analyze_trends(640, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(640, "IdealPointDistance")
+```
+## UK
+```{r UK, echo=FALSE, warning=FALSE}
+plot_time_series(combined, 200, "China-UK Relationship", 2015)
+print('Economic Dependence Trend Result:')
+analyze_trends(200, "Share")
+print('Political Relationship Trend Result:')
+analyze_trends(200, "IdealPointDistance")
+```
+
